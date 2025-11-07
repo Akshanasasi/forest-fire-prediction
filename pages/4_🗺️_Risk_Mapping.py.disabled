@@ -1,0 +1,745 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+import folium
+from streamlit_folium import st_folium
+from folium.plugins import HeatMap
+import json
+
+st.set_page_config(page_title="Risk Mapping", page_icon="🗺️", layout="wide")
+
+def main():
+    st.title("🗺️ Fire Risk Mapping & Monitoring")
+    st.markdown("### Interactive maps showing real-time fire risk assessment and monitoring zones")
+    
+    # Sidebar controls
+    st.sidebar.header("🎛️ Map Controls")
+    
+    # Map type selection
+    map_type = st.sidebar.selectbox(
+        "Map Type",
+        ["Risk Assessment", "Real-time Monitoring", "Historical Incidents", "Weather Overlay"]
+    )
+    
+    # Risk level filter
+    risk_levels = st.sidebar.multiselect(
+        "Show Risk Levels",
+        ["Low", "Moderate", "High", "Extreme"],
+        default=["Moderate", "High", "Extreme"]
+    )
+    
+    # Time range for real-time data
+    time_range = st.sidebar.selectbox(
+        "Time Range",
+        ["Last 24 hours", "Last 7 days", "Last 30 days", "Last year"]
+    )
+    
+    # Region focus
+    region_center = st.sidebar.selectbox(
+        "Focus Region",
+        ["California", "Pacific Northwest", "Rocky Mountains", "Southwest", "Custom"]
+    )
+    
+    # Main content based on map type
+    if map_type == "Risk Assessment":
+        show_risk_assessment_map(risk_levels, region_center)
+    elif map_type == "Real-time Monitoring":
+        show_real_time_monitoring(time_range, region_center)
+    elif map_type == "Historical Incidents":
+        show_historical_incidents_map(time_range, region_center)
+    else:  # Weather Overlay
+        show_weather_overlay_map(region_center)
+
+def show_risk_assessment_map(risk_levels, region_center):
+    """Display fire risk assessment map"""
+    
+    st.header("🔥 Current Fire Risk Assessment")
+    
+    # Get center coordinates for region
+    center_coords = get_region_center(region_center)
+    
+    # Create the main map
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        # Create Folium map
+        m = folium.Map(
+            location=center_coords,
+            zoom_start=7,
+            tiles='OpenStreetMap'
+        )
+        
+        # Generate risk assessment data
+        risk_data = generate_risk_assessment_data(center_coords, risk_levels)
+        
+        # Add risk zones to map
+        for _, zone in risk_data.iterrows():
+            if zone['risk_level'] in risk_levels:
+                # Color based on risk level
+                color_map = {
+                    'Low': '#90EE90',      # Light green
+                    'Moderate': '#FFD700',  # Gold
+                    'High': '#FF6347',      # Tomato
+                    'Extreme': '#DC143C'    # Crimson
+                }
+                
+                # Create circle marker for risk zone
+                folium.CircleMarker(
+                    location=[zone['latitude'], zone['longitude']],
+                    radius=zone['risk_score'] / 5,  # Scale radius with risk
+                    popup=f"""
+                    <b>Risk Level:</b> {zone['risk_level']}<br>
+                    <b>Risk Score:</b> {zone['risk_score']:.1f}%<br>
+                    <b>Location:</b> {zone['location']}<br>
+                    <b>Last Updated:</b> {zone['last_updated']}
+                    """,
+                    color='black',
+                    weight=1,
+                    fillColor=color_map[zone['risk_level']],
+                    fillOpacity=0.7
+                ).add_to(m)
+        
+        # Add legend
+        legend_html = '''
+        <div style="position: fixed; 
+                    bottom: 50px; left: 50px; width: 150px; height: 120px; 
+                    background-color: white; border:2px solid grey; z-index:9999; 
+                    font-size:14px; padding: 10px">
+        <p><b>Fire Risk Levels</b></p>
+        <p><i class="fa fa-circle" style="color:#90EE90"></i> Low</p>
+        <p><i class="fa fa-circle" style="color:#FFD700"></i> Moderate</p>
+        <p><i class="fa fa-circle" style="color:#FF6347"></i> High</p>
+        <p><i class="fa fa-circle" style="color:#DC143C"></i> Extreme</p>
+        </div>
+        '''
+        m.get_root().html.add_child(folium.Element(legend_html))
+        
+        # Display map
+        map_data = st_folium(m, width=700, height=500)
+    
+    with col2:
+        st.subheader("📊 Risk Summary")
+        
+        # Risk level distribution
+        risk_counts = risk_data['risk_level'].value_counts()
+        
+        for level in ['Extreme', 'High', 'Moderate', 'Low']:
+            if level in risk_counts.index:
+                count = risk_counts[level]
+                color_map = {
+                    'Low': '#90EE90',
+                    'Moderate': '#FFD700',
+                    'High': '#FF6347',
+                    'Extreme': '#DC143C'
+                }
+                st.markdown(f"""
+                <div style="background-color: {color_map[level]}; 
+                           padding: 10px; margin: 5px; border-radius: 5px;">
+                    <b>{level} Risk:</b> {count} zones
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Current alerts
+        st.subheader("🚨 Active Alerts")
+        
+        extreme_zones = risk_data[risk_data['risk_level'] == 'Extreme']
+        high_zones = risk_data[risk_data['risk_level'] == 'High']
+        
+        if len(extreme_zones) > 0:
+            st.error(f"🚨 {len(extreme_zones)} EXTREME risk zones")
+        
+        if len(high_zones) > 0:
+            st.warning(f"⚠️ {len(high_zones)} HIGH risk zones")
+        
+        if len(extreme_zones) == 0 and len(high_zones) == 0:
+            st.success("✅ No critical alerts")
+        
+        # Weather conditions
+        st.subheader("🌤️ Current Conditions")
+        st.metric("Temperature", "28°C", "↑3°C")
+        st.metric("Humidity", "35%", "↓15%")
+        st.metric("Wind Speed", "15 km/h", "↑5 km/h")
+        st.metric("Fire Weather Index", "High", "")
+    
+    # Detailed zone information
+    st.markdown("---")
+    st.subheader("📋 Zone Details")
+    
+    # Filter and display zone data
+    display_zones = risk_data[risk_data['risk_level'].isin(risk_levels)]
+    
+    if len(display_zones) > 0:
+        st.dataframe(
+            display_zones[['location', 'risk_level', 'risk_score', 'confidence', 'last_updated']],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("No zones match the selected risk level filters.")
+
+def show_real_time_monitoring(time_range, region_center):
+    """Display real-time monitoring map"""
+    
+    st.header("📡 Real-time Fire Monitoring")
+    
+    center_coords = get_region_center(region_center)
+    
+    tab1, tab2, tab3 = st.tabs(["🛰️ Satellite Detection", "🌡️ Weather Monitoring", "📊 Alert Dashboard"])
+    
+    with tab1:
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            # Create map with satellite detections
+            m = folium.Map(location=center_coords, zoom_start=7)
+            
+            # Generate satellite detection data
+            detections = generate_satellite_detections(center_coords, time_range)
+            
+            # Add detections to map
+            for _, detection in detections.iterrows():
+                # Color based on confidence
+                if detection['confidence'] > 0.8:
+                    color = 'red'
+                elif detection['confidence'] > 0.6:
+                    color = 'orange'
+                else:
+                    color = 'yellow'
+                
+                folium.CircleMarker(
+                    location=[detection['latitude'], detection['longitude']],
+                    radius=5,
+                    popup=f"""
+                    <b>Detection Time:</b> {detection['detection_time']}<br>
+                    <b>Confidence:</b> {detection['confidence']:.1%}<br>
+                    <b>Temperature:</b> {detection['temperature']:.0f}°C<br>
+                    <b>Size Est:</b> {detection['size_estimate']:.1f} acres
+                    """,
+                    color='black',
+                    weight=1,
+                    fillColor=color,
+                    fillOpacity=0.8
+                ).add_to(m)
+            
+            st_folium(m, width=700, height=400)
+        
+        with col2:
+            st.subheader("🎯 Detection Stats")
+            st.metric("Active Detections", len(detections))
+            st.metric("High Confidence", len(detections[detections['confidence'] > 0.8]))
+            st.metric("Avg Confidence", f"{detections['confidence'].mean():.1%}")
+            
+            # Recent detections
+            st.subheader("🕐 Recent Activity")
+            recent = detections.head(5)
+            for _, det in recent.iterrows():
+                confidence_color = "🔴" if det['confidence'] > 0.8 else "🟡"
+                st.markdown(f"{confidence_color} {det['detection_time']} - {det['confidence']:.1%}")
+    
+    with tab2:
+        st.subheader("🌤️ Weather Station Network")
+        
+        # Weather stations map
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            weather_data = generate_weather_stations(center_coords)
+            
+            # Create weather conditions chart
+            fig = go.Figure()
+            
+            # Add temperature trace
+            fig.add_trace(go.Scatter(
+                x=weather_data['station_name'],
+                y=weather_data['temperature'],
+                mode='markers+lines',
+                name='Temperature (°C)',
+                yaxis='y',
+                marker=dict(size=10, color='red')
+            ))
+            
+            # Add humidity on secondary y-axis
+            fig.add_trace(go.Scatter(
+                x=weather_data['station_name'],
+                y=weather_data['humidity'],
+                mode='markers+lines',
+                name='Humidity (%)',
+                yaxis='y2',
+                marker=dict(size=10, color='blue')
+            ))
+            
+            # Update layout for dual y-axis
+            fig.update_layout(
+                title="Current Weather Conditions",
+                xaxis=dict(title="Weather Station", tickangle=45),
+                yaxis=dict(title="Temperature (°C)", side="left"),
+                yaxis2=dict(title="Humidity (%)", side="right", overlaying="y"),
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            st.subheader("⚠️ Weather Alerts")
+            
+            # Check for extreme conditions
+            high_temp_stations = weather_data[weather_data['temperature'] > 35]
+            low_humidity_stations = weather_data[weather_data['humidity'] < 20]
+            high_wind_stations = weather_data[weather_data['wind_speed'] > 30]
+            
+            if len(high_temp_stations) > 0:
+                st.error(f"🌡️ {len(high_temp_stations)} stations reporting high temps")
+            
+            if len(low_humidity_stations) > 0:
+                st.warning(f"💧 {len(low_humidity_stations)} stations with low humidity")
+            
+            if len(high_wind_stations) > 0:
+                st.warning(f"💨 {len(high_wind_stations)} stations with high winds")
+            
+            # Weather summary
+            st.subheader("📈 Summary")
+            st.metric("Avg Temperature", f"{weather_data['temperature'].mean():.1f}°C")
+            st.metric("Avg Humidity", f"{weather_data['humidity'].mean():.1f}%")
+            st.metric("Max Wind Speed", f"{weather_data['wind_speed'].max():.1f} km/h")
+    
+    with tab3:
+        st.subheader("🚨 Alert Dashboard")
+        
+        # Alert summary
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("🔥 Fire Alerts", "3", "↑1")
+        with col2:
+            st.metric("🌡️ Heat Warnings", "7", "↑2")
+        with col3:
+            st.metric("💨 Wind Alerts", "2", "→")
+        with col4:
+            st.metric("📡 System Status", "Online", "")
+        
+        # Alert timeline
+        st.subheader("📅 Alert Timeline")
+        
+        alert_data = generate_alert_timeline(time_range)
+        
+        fig = px.timeline(
+            alert_data,
+            x_start="start_time",
+            x_end="end_time",
+            y="alert_type",
+            color="severity",
+            title="Active Alerts Timeline"
+        )
+        fig.update_yaxes(autorange="reversed")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Alert details table
+        st.subheader("📋 Alert Details")
+        st.dataframe(
+            alert_data[['alert_type', 'severity', 'location', 'description', 'start_time']],
+            use_container_width=True,
+            hide_index=True
+        )
+
+def show_historical_incidents_map(time_range, region_center):
+    """Display historical fire incidents map"""
+    
+    st.header("📚 Historical Fire Incidents")
+    
+    center_coords = get_region_center(region_center)
+    
+    # Generate historical incident data
+    incidents = generate_historical_incidents(center_coords, time_range)
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        # Create map with historical incidents
+        m = folium.Map(location=center_coords, zoom_start=7)
+        
+        # Add incidents to map
+        for _, incident in incidents.iterrows():
+            # Size and color based on fire size
+            if incident['acres_burned'] > 10000:
+                color = 'darkred'
+                radius = 15
+            elif incident['acres_burned'] > 1000:
+                color = 'red'
+                radius = 10
+            elif incident['acres_burned'] > 100:
+                color = 'orange'
+                radius = 7
+            else:
+                color = 'yellow'
+                radius = 5
+            
+            folium.CircleMarker(
+                location=[incident['latitude'], incident['longitude']],
+                radius=radius,
+                popup=f"""
+                <b>Fire Name:</b> {incident['fire_name']}<br>
+                <b>Date:</b> {incident['start_date']}<br>
+                <b>Size:</b> {incident['acres_burned']:,.0f} acres<br>
+                <b>Duration:</b> {incident['duration_days']:.0f} days<br>
+                <b>Cause:</b> {incident['cause']}
+                """,
+                color='black',
+                weight=1,
+                fillColor=color,
+                fillOpacity=0.7
+            ).add_to(m)
+        
+        st_folium(m, width=700, height=500)
+    
+    with col2:
+        st.subheader("📊 Incident Summary")
+        
+        total_incidents = len(incidents)
+        total_acres = incidents['acres_burned'].sum()
+        avg_size = incidents['acres_burned'].mean()
+        
+        st.metric("Total Incidents", total_incidents)
+        st.metric("Total Acres", f"{total_acres:,.0f}")
+        st.metric("Average Size", f"{avg_size:,.0f}")
+        
+        # Size distribution
+        st.subheader("📈 Size Distribution")
+        
+        size_categories = pd.cut(
+            incidents['acres_burned'],
+            bins=[0, 100, 1000, 10000, float('inf')],
+            labels=['Small', 'Medium', 'Large', 'Very Large']
+        )
+        
+        size_counts = size_categories.value_counts()
+        
+        fig = px.pie(
+            values=size_counts.values,
+            names=size_counts.index,
+            title="Incidents by Size"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Detailed incident table
+    st.markdown("---")
+    st.subheader("📋 Incident Details")
+    
+    # Sort by size and show top incidents
+    incidents_sorted = incidents.sort_values('acres_burned', ascending=False)
+    
+    st.dataframe(
+        incidents_sorted[['fire_name', 'start_date', 'acres_burned', 'duration_days', 'cause']].head(20),
+        use_container_width=True,
+        hide_index=True
+    )
+
+def show_weather_overlay_map(region_center):
+    """Display weather overlay map"""
+    
+    st.header("🌤️ Weather Conditions Overlay")
+    
+    center_coords = get_region_center(region_center)
+    
+    # Weather data controls
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        weather_layer = st.selectbox(
+            "Weather Layer",
+            ["Temperature", "Humidity", "Wind Speed", "Precipitation"]
+        )
+    
+    with col2:
+        forecast_hours = st.selectbox(
+            "Forecast",
+            ["Current", "+6 hours", "+12 hours", "+24 hours", "+48 hours"]
+        )
+    
+    with col3:
+        show_contours = st.checkbox("Show Contours", value=True)
+    
+    # Generate weather grid data
+    weather_grid = generate_weather_grid(center_coords, weather_layer)
+    
+    # Create weather visualization
+    if weather_layer == "Temperature":
+        color_scale = "RdYlBu_r"
+        unit = "°C"
+    elif weather_layer == "Humidity":
+        color_scale = "Blues"
+        unit = "%"
+    elif weather_layer == "Wind Speed":
+        color_scale = "Viridis"
+        unit = "km/h"
+    else:  # Precipitation
+        color_scale = "Blues"
+        unit = "mm"
+    
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=weather_grid['values'],
+        x=weather_grid['lon'],
+        y=weather_grid['lat'],
+        colorscale=color_scale,
+        colorbar=dict(title=f"{weather_layer} ({unit})")
+    ))
+    
+    if show_contours:
+        fig.add_trace(go.Contour(
+            z=weather_grid['values'],
+            x=weather_grid['lon'],
+            y=weather_grid['lat'],
+            showscale=False,
+            contours_coloring="lines",
+            line_width=2,
+            line_color="white"
+        ))
+    
+    fig.update_layout(
+        title=f"{weather_layer} - {forecast_hours}",
+        xaxis_title="Longitude",
+        yaxis_title="Latitude",
+        height=500
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Weather statistics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    values = weather_grid['values'].flatten()
+    
+    with col1:
+        st.metric("Minimum", f"{np.min(values):.1f} {unit}")
+    with col2:
+        st.metric("Maximum", f"{np.max(values):.1f} {unit}")
+    with col3:
+        st.metric("Average", f"{np.mean(values):.1f} {unit}")
+    with col4:
+        st.metric("Std Dev", f"{np.std(values):.1f} {unit}")
+
+def get_region_center(region_name):
+    """Get center coordinates for region"""
+    region_centers = {
+        "California": [36.7783, -119.4179],
+        "Pacific Northwest": [45.0, -121.0],
+        "Rocky Mountains": [40.0, -106.0],
+        "Southwest": [34.0, -111.0],
+        "Custom": [39.0, -98.0]  # Center of US
+    }
+    return region_centers.get(region_name, [39.0, -98.0])
+
+def generate_risk_assessment_data(center_coords, risk_levels):
+    """Generate synthetic risk assessment data"""
+    
+    np.random.seed(42)  # For reproducible results
+    
+    n_zones = 50
+    data = []
+    
+    for i in range(n_zones):
+        # Generate coordinates around center
+        lat_offset = np.random.normal(0, 1.5)
+        lon_offset = np.random.normal(0, 1.5)
+        
+        latitude = center_coords[0] + lat_offset
+        longitude = center_coords[1] + lon_offset
+        
+        # Generate risk score and level
+        risk_score = np.random.beta(2, 3) * 100  # Biased towards lower risk
+        
+        if risk_score < 25:
+            risk_level = "Low"
+        elif risk_score < 50:
+            risk_level = "Moderate"
+        elif risk_score < 75:
+            risk_level = "High"
+        else:
+            risk_level = "Extreme"
+        
+        # Generate other attributes
+        confidence = np.random.uniform(0.7, 0.95)
+        location = f"Zone_{i+1:03d}"
+        last_updated = f"{np.random.randint(1, 24)}h ago"
+        
+        data.append({
+            'zone_id': f"ZONE_{i+1:03d}",
+            'latitude': latitude,
+            'longitude': longitude,
+            'risk_score': risk_score,
+            'risk_level': risk_level,
+            'confidence': confidence,
+            'location': location,
+            'last_updated': last_updated
+        })
+    
+    return pd.DataFrame(data)
+
+def generate_satellite_detections(center_coords, time_range):
+    """Generate synthetic satellite detection data"""
+    
+    # Number of detections based on time range
+    time_multipliers = {
+        "Last 24 hours": 5,
+        "Last 7 days": 20,
+        "Last 30 days": 50,
+        "Last year": 200
+    }
+    
+    n_detections = time_multipliers.get(time_range, 20)
+    
+    data = []
+    for i in range(n_detections):
+        lat_offset = np.random.normal(0, 1.0)
+        lon_offset = np.random.normal(0, 1.0)
+        
+        detection_data = {
+            'detection_id': f"SAT_{i+1:04d}",
+            'latitude': center_coords[0] + lat_offset,
+            'longitude': center_coords[1] + lon_offset,
+            'detection_time': f"{np.random.randint(1, 72)}h ago",
+            'confidence': np.random.beta(3, 2),
+            'temperature': np.random.uniform(300, 800),  # Kelvin, converted for display
+            'size_estimate': np.random.exponential(5)
+        }
+        
+        data.append(detection_data)
+    
+    return pd.DataFrame(data)
+
+def generate_weather_stations(center_coords):
+    """Generate synthetic weather station data"""
+    
+    station_names = [
+        "Mountain View", "Pine Ridge", "Cedar Point", "Oak Hill",
+        "River Valley", "High Peak", "Forest Edge", "Canyon View"
+    ]
+    
+    data = []
+    for i, name in enumerate(station_names):
+        lat_offset = np.random.normal(0, 0.8)
+        lon_offset = np.random.normal(0, 0.8)
+        
+        station_data = {
+            'station_id': f"WS_{i+1:03d}",
+            'station_name': name,
+            'latitude': center_coords[0] + lat_offset,
+            'longitude': center_coords[1] + lon_offset,
+            'temperature': np.random.uniform(20, 45),
+            'humidity': np.random.uniform(15, 80),
+            'wind_speed': np.random.exponential(15),
+            'pressure': np.random.uniform(980, 1020)
+        }
+        
+        data.append(station_data)
+    
+    return pd.DataFrame(data)
+
+def generate_alert_timeline(time_range):
+    """Generate synthetic alert timeline data"""
+    
+    from datetime import datetime, timedelta
+    
+    alert_types = ["Fire Detection", "High Temperature", "Low Humidity", "High Wind", "System Warning"]
+    severities = ["Low", "Medium", "High", "Critical"]
+    
+    base_time = datetime.now()
+    
+    data = []
+    for i in range(10):
+        hours_ago = np.random.randint(1, 168)  # Last week
+        start_time = base_time - timedelta(hours=hours_ago)
+        duration = np.random.randint(1, 24)  # 1-24 hours
+        end_time = start_time + timedelta(hours=duration)
+        
+        alert_data = {
+            'alert_id': f"ALERT_{i+1:03d}",
+            'alert_type': np.random.choice(alert_types),
+            'severity': np.random.choice(severities, p=[0.4, 0.3, 0.2, 0.1]),
+            'location': f"Zone {np.random.randint(1, 50)}",
+            'description': "Automated alert triggered by threshold exceed",
+            'start_time': start_time,
+            'end_time': end_time if np.random.random() > 0.3 else datetime.now()
+        }
+        
+        data.append(alert_data)
+    
+    return pd.DataFrame(data)
+
+def generate_historical_incidents(center_coords, time_range):
+    """Generate synthetic historical incident data"""
+    
+    # Number of incidents based on time range
+    time_multipliers = {
+        "Last 24 hours": 0,
+        "Last 7 days": 2,
+        "Last 30 days": 8,
+        "Last year": 30
+    }
+    
+    n_incidents = time_multipliers.get(time_range, 15)
+    
+    if n_incidents == 0:
+        return pd.DataFrame()
+    
+    fire_names = [
+        "Canyon Fire", "Ridge Fire", "Valley Fire", "Creek Fire", "Mountain Fire",
+        "Pine Fire", "Oak Fire", "Cedar Fire", "River Fire", "Hill Fire"
+    ]
+    
+    causes = ["Lightning", "Human-Caused", "Equipment", "Campfire", "Unknown"]
+    
+    data = []
+    for i in range(n_incidents):
+        lat_offset = np.random.normal(0, 1.5)
+        lon_offset = np.random.normal(0, 1.5)
+        
+        incident_data = {
+            'fire_id': f"FIRE_{i+1:04d}",
+            'fire_name': f"{np.random.choice(fire_names)} {2020 + i}",
+            'latitude': center_coords[0] + lat_offset,
+            'longitude': center_coords[1] + lon_offset,
+            'start_date': f"2023-{np.random.randint(5, 10):02d}-{np.random.randint(1, 28):02d}",
+            'acres_burned': np.random.lognormal(6, 1.5),
+            'duration_days': np.random.gamma(2, 3),
+            'cause': np.random.choice(causes)
+        }
+        
+        data.append(incident_data)
+    
+    return pd.DataFrame(data)
+
+def generate_weather_grid(center_coords, weather_type):
+    """Generate synthetic weather grid data"""
+    
+    # Create grid
+    lat_range = np.linspace(center_coords[0] - 2, center_coords[0] + 2, 20)
+    lon_range = np.linspace(center_coords[1] - 2, center_coords[1] + 2, 20)
+    
+    lat_grid, lon_grid = np.meshgrid(lat_range, lon_range)
+    
+    # Generate weather values based on type
+    if weather_type == "Temperature":
+        # Temperature pattern with some randomness
+        values = 25 + 10 * np.sin(lat_grid * 0.5) + 5 * np.cos(lon_grid * 0.3) + np.random.normal(0, 2, lat_grid.shape)
+    elif weather_type == "Humidity":
+        # Humidity pattern
+        values = 50 - 20 * np.sin(lat_grid * 0.3) + np.random.normal(0, 5, lat_grid.shape)
+        values = np.clip(values, 0, 100)
+    elif weather_type == "Wind Speed":
+        # Wind speed pattern
+        values = 10 + 15 * np.exp(-((lat_grid - center_coords[0])**2 + (lon_grid - center_coords[1])**2) / 2) + np.random.exponential(3, lat_grid.shape)
+    else:  # Precipitation
+        # Precipitation pattern
+        values = np.random.exponential(2, lat_grid.shape)
+    
+    return {
+        'lat': lat_range,
+        'lon': lon_range,
+        'values': values
+    }
+
+if __name__ == "__main__":
+    main()

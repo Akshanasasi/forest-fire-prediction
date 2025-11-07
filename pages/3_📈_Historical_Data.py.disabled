@@ -1,0 +1,569 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from datetime import datetime, timedelta
+import calendar
+
+st.set_page_config(page_title="Historical Data", page_icon="📈", layout="wide")
+
+def main():
+    st.title("📈 Historical Fire Data Analysis")
+    st.markdown("### Analyze past fire incidents and identify patterns and trends")
+    
+    # Sidebar filters
+    st.sidebar.header("🔍 Data Filters")
+    
+    # Date range selection
+    start_year = st.sidebar.selectbox("Start Year", range(2010, 2025), index=10)
+    end_year = st.sidebar.selectbox("End Year", range(2010, 2025), index=14)
+    
+    # Region selection
+    regions = ["All Regions", "California", "Oregon", "Washington", "Montana", "Colorado", "Arizona"]
+    selected_region = st.sidebar.selectbox("Region", regions)
+    
+    # Fire size filter
+    fire_size_filter = st.sidebar.select_slider(
+        "Minimum Fire Size (acres)",
+        options=[1, 10, 100, 1000, 10000, 50000],
+        value=100
+    )
+    
+    # Generate sample historical data
+    historical_data = generate_historical_data(start_year, end_year, selected_region, fire_size_filter)
+    
+    # Main content tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📅 Temporal Trends", "🌍 Geographic Patterns", "🔍 Detailed Analysis"])
+    
+    with tab1:
+        st.header("📊 Historical Overview")
+        
+        # Key statistics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        total_fires = len(historical_data)
+        total_acres = historical_data['acres_burned'].sum()
+        avg_size = historical_data['acres_burned'].mean()
+        largest_fire = historical_data['acres_burned'].max()
+        
+        with col1:
+            st.metric("Total Fires", f"{total_fires:,}")
+        with col2:
+            st.metric("Total Acres Burned", f"{total_acres:,.0f}")
+        with col3:
+            st.metric("Average Fire Size", f"{avg_size:,.0f} acres")
+        with col4:
+            st.metric("Largest Fire", f"{largest_fire:,.0f} acres")
+        
+        # Yearly summary chart
+        st.subheader("📈 Annual Fire Activity")
+        
+        yearly_summary = historical_data.groupby('year').agg({
+            'fire_id': 'count',
+            'acres_burned': 'sum'
+        }).rename(columns={'fire_id': 'fire_count'})
+        
+        fig = make_subplots(
+            rows=2, cols=1,
+            subplot_titles=('Number of Fires per Year', 'Total Acres Burned per Year'),
+            vertical_spacing=0.15
+        )
+        
+        # Fire count subplot
+        fig.add_trace(
+            go.Scatter(
+                x=yearly_summary.index,
+                y=yearly_summary['fire_count'],
+                mode='lines+markers',
+                name='Fire Count',
+                line=dict(color='red', width=3),
+                marker=dict(size=8)
+            ),
+            row=1, col=1
+        )
+        
+        # Acres burned subplot
+        fig.add_trace(
+            go.Scatter(
+                x=yearly_summary.index,
+                y=yearly_summary['acres_burned'],
+                mode='lines+markers',
+                name='Acres Burned',
+                line=dict(color='orange', width=3),
+                marker=dict(size=8)
+            ),
+            row=2, col=1
+        )
+        
+        fig.update_layout(height=600, showlegend=False)
+        fig.update_xaxes(title_text="Year", row=2, col=1)
+        fig.update_yaxes(title_text="Number of Fires", row=1, col=1)
+        fig.update_yaxes(title_text="Acres Burned", row=2, col=1)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Fire size distribution
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("🔥 Fire Size Distribution")
+            
+            # Create size categories
+            historical_data['size_category'] = pd.cut(
+                historical_data['acres_burned'],
+                bins=[0, 100, 1000, 10000, 50000, float('inf')],
+                labels=['Small (0-100)', 'Medium (100-1K)', 'Large (1K-10K)', 'Very Large (10K-50K)', 'Extreme (50K+)']
+            )
+            
+            size_dist = historical_data['size_category'].value_counts()
+            
+            fig = px.pie(
+                values=size_dist.values,
+                names=size_dist.index,
+                title="Distribution by Fire Size Category"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            st.subheader("🌡️ Fire Cause Analysis")
+            
+            # Fire causes
+            causes = ['Lightning', 'Human-Caused', 'Equipment', 'Campfire', 'Debris Burning', 'Arson', 'Unknown']
+            cause_weights = [0.3, 0.25, 0.15, 0.12, 0.08, 0.05, 0.05]
+            historical_data['cause'] = np.random.choice(causes, size=len(historical_data), p=cause_weights)
+            
+            cause_dist = historical_data['cause'].value_counts()
+            
+            fig = px.bar(
+                x=cause_dist.index,
+                y=cause_dist.values,
+                title="Fires by Cause",
+                color=cause_dist.values,
+                color_continuous_scale='Reds'
+            )
+            fig.update_xaxes(tickangle=45)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with tab2:
+        st.header("📅 Temporal Trends Analysis")
+        
+        # Monthly fire activity
+        st.subheader("📆 Seasonal Fire Patterns")
+        
+        historical_data['month'] = historical_data['date'].dt.month
+        monthly_stats = historical_data.groupby('month').agg({
+            'fire_id': 'count',
+            'acres_burned': 'sum'
+        }).rename(columns={'fire_id': 'fire_count'})
+        
+        month_names = [calendar.month_abbr[i] for i in range(1, 13)]
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig = px.bar(
+                x=month_names,
+                y=monthly_stats['fire_count'],
+                title="Fire Count by Month",
+                color=monthly_stats['fire_count'],
+                color_continuous_scale='Reds'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            fig = px.bar(
+                x=month_names,
+                y=monthly_stats['acres_burned'],
+                title="Acres Burned by Month",
+                color=monthly_stats['acres_burned'],
+                color_continuous_scale='Oranges'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Multi-year trend analysis
+        st.subheader("📈 Long-term Trends")
+        
+        # Calculate rolling averages
+        yearly_summary_sorted = yearly_summary.sort_index()
+        yearly_summary_sorted['fire_count_ma'] = yearly_summary_sorted['fire_count'].rolling(window=3, center=True).mean()
+        yearly_summary_sorted['acres_burned_ma'] = yearly_summary_sorted['acres_burned'].rolling(window=3, center=True).mean()
+        
+        fig = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=('Fire Count Trend', 'Acres Burned Trend')
+        )
+        
+        # Fire count trend
+        fig.add_trace(
+            go.Scatter(
+                x=yearly_summary_sorted.index,
+                y=yearly_summary_sorted['fire_count'],
+                mode='markers',
+                name='Annual Count',
+                marker=dict(color='lightcoral', size=8),
+                opacity=0.6
+            ),
+            row=1, col=1
+        )
+        
+        fig.add_trace(
+            go.Scatter(
+                x=yearly_summary_sorted.index,
+                y=yearly_summary_sorted['fire_count_ma'],
+                mode='lines',
+                name='3-Year Average',
+                line=dict(color='red', width=3)
+            ),
+            row=1, col=1
+        )
+        
+        # Acres burned trend
+        fig.add_trace(
+            go.Scatter(
+                x=yearly_summary_sorted.index,
+                y=yearly_summary_sorted['acres_burned'],
+                mode='markers',
+                name='Annual Acres',
+                marker=dict(color='orange', size=8),
+                opacity=0.6
+            ),
+            row=1, col=2
+        )
+        
+        fig.add_trace(
+            go.Scatter(
+                x=yearly_summary_sorted.index,
+                y=yearly_summary_sorted['acres_burned_ma'],
+                mode='lines',
+                name='3-Year Average',
+                line=dict(color='darkorange', width=3)
+            ),
+            row=1, col=2
+        )
+        
+        fig.update_layout(height=400, showlegend=True)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Weekly patterns
+        st.subheader("📊 Weekly Fire Activity Patterns")
+        
+        historical_data['day_of_week'] = historical_data['date'].dt.day_name()
+        daily_stats = historical_data.groupby('day_of_week').agg({
+            'fire_id': 'count',
+            'acres_burned': 'mean'
+        }).rename(columns={'fire_id': 'fire_count', 'acres_burned': 'avg_size'})
+        
+        # Reorder days
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        daily_stats = daily_stats.reindex(day_order)
+        
+        fig = px.bar(
+            x=daily_stats.index,
+            y=daily_stats['fire_count'],
+            title="Fire Frequency by Day of Week",
+            color=daily_stats['fire_count'],
+            color_continuous_scale='Reds'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with tab3:
+        st.header("🌍 Geographic Patterns")
+        
+        # State-wise analysis
+        st.subheader("🗺️ Regional Fire Activity")
+        
+        if selected_region == "All Regions":
+            # Show state comparison
+            state_stats = historical_data.groupby('state').agg({
+                'fire_id': 'count',
+                'acres_burned': 'sum'
+            }).rename(columns={'fire_id': 'fire_count'}).sort_values('fire_count', ascending=False)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig = px.bar(
+                    x=state_stats.index,
+                    y=state_stats['fire_count'],
+                    title="Fire Count by State",
+                    color=state_stats['fire_count'],
+                    color_continuous_scale='Reds'
+                )
+                fig.update_xaxes(tickangle=45)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                fig = px.bar(
+                    x=state_stats.index,
+                    y=state_stats['acres_burned'],
+                    title="Total Acres Burned by State",
+                    color=state_stats['acres_burned'],
+                    color_continuous_scale='Oranges'
+                )
+                fig.update_xaxes(tickangle=45)
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Fire density map simulation
+        st.subheader("🔥 Fire Density Heatmap")
+        
+        # Create a grid for fire density
+        lat_bins = np.linspace(32, 49, 20)
+        lon_bins = np.linspace(-125, -104, 20)
+        
+        # Create density matrix
+        density_matrix = np.random.exponential(scale=2, size=(len(lat_bins)-1, len(lon_bins)-1))
+        
+        fig = go.Figure(data=go.Heatmap(
+            z=density_matrix,
+            x=lon_bins[:-1],
+            y=lat_bins[:-1],
+            colorscale='Reds',
+            colorbar=dict(title="Fire Density")
+        ))
+        
+        fig.update_layout(
+            title="Historical Fire Density Map",
+            xaxis_title="Longitude",
+            yaxis_title="Latitude"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Elevation and fire relationship
+        st.subheader("⛰️ Elevation vs Fire Activity")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Create elevation bins
+            historical_data['elevation_bin'] = pd.cut(
+                historical_data['elevation'],
+                bins=5,
+                labels=['Very Low', 'Low', 'Medium', 'High', 'Very High']
+            )
+            
+            elevation_stats = historical_data.groupby('elevation_bin')['fire_id'].count()
+            
+            fig = px.bar(
+                x=elevation_stats.index,
+                y=elevation_stats.values,
+                title="Fire Count by Elevation",
+                color=elevation_stats.values,
+                color_continuous_scale='earth'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Scatter plot of elevation vs fire size
+            fig = px.scatter(
+                historical_data.sample(min(1000, len(historical_data))),
+                x='elevation',
+                y='acres_burned',
+                title="Fire Size vs Elevation",
+                opacity=0.6,
+                color='acres_burned',
+                color_continuous_scale='Reds'
+            )
+            fig.update_yaxes(type="log")
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with tab4:
+        st.header("🔍 Detailed Analysis")
+        
+        # Advanced statistics
+        st.subheader("📊 Statistical Summary")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Fire Size Statistics (Acres):**")
+            size_stats = historical_data['acres_burned'].describe()
+            
+            stats_df = pd.DataFrame({
+                'Statistic': ['Count', 'Mean', 'Std Dev', 'Min', '25%', '50%', '75%', 'Max'],
+                'Value': [f"{size_stats['count']:,.0f}",
+                         f"{size_stats['mean']:,.0f}",
+                         f"{size_stats['std']:,.0f}",
+                         f"{size_stats['min']:,.0f}",
+                         f"{size_stats['25%']:,.0f}",
+                         f"{size_stats['50%']:,.0f}",
+                         f"{size_stats['75%']:,.0f}",
+                         f"{size_stats['max']:,.0f}"]
+            })
+            st.dataframe(stats_df, hide_index=True)
+        
+        with col2:
+            st.markdown("**Duration Statistics (Days):**")
+            duration_stats = historical_data['duration_days'].describe()
+            
+            duration_df = pd.DataFrame({
+                'Statistic': ['Count', 'Mean', 'Std Dev', 'Min', '25%', '50%', '75%', 'Max'],
+                'Value': [f"{duration_stats['count']:,.0f}",
+                         f"{duration_stats['mean']:.1f}",
+                         f"{duration_stats['std']:.1f}",
+                         f"{duration_stats['min']:.0f}",
+                         f"{duration_stats['25%']:.1f}",
+                         f"{duration_stats['50%']:.1f}",
+                         f"{duration_stats['75%']:.1f}",
+                         f"{duration_stats['max']:.0f}"]
+            })
+            st.dataframe(duration_df, hide_index=True)
+        
+        # Correlation analysis
+        st.subheader("🔗 Correlation Analysis")
+        
+        # Select numeric columns for correlation
+        numeric_cols = ['acres_burned', 'duration_days', 'temperature', 'humidity', 'wind_speed', 'elevation']
+        correlation_matrix = historical_data[numeric_cols].corr()
+        
+        fig = px.imshow(
+            correlation_matrix,
+            text_auto=True,
+            color_continuous_scale='RdBu',
+            title="Feature Correlation Matrix"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Extreme events analysis
+        st.subheader("🚨 Extreme Fire Events")
+        
+        # Define extreme events (top 5% by size)
+        extreme_threshold = historical_data['acres_burned'].quantile(0.95)
+        extreme_fires = historical_data[historical_data['acres_burned'] >= extreme_threshold]
+        
+        if len(extreme_fires) > 0:
+            st.markdown(f"**Found {len(extreme_fires)} extreme fire events (≥{extreme_threshold:,.0f} acres)**")
+            
+            # Show top 10 largest fires
+            top_fires = extreme_fires.nlargest(10, 'acres_burned')[
+                ['year', 'state', 'acres_burned', 'duration_days', 'cause']
+            ]
+            
+            st.dataframe(top_fires, hide_index=True)
+            
+            # Extreme fires by year
+            extreme_by_year = extreme_fires.groupby('year').size()
+            
+            fig = px.bar(
+                x=extreme_by_year.index,
+                y=extreme_by_year.values,
+                title="Extreme Fire Events by Year",
+                color=extreme_by_year.values,
+                color_continuous_scale='Reds'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Export options
+        st.subheader("💾 Data Export")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📊 Export Summary Stats"):
+                summary_data = yearly_summary.reset_index()
+                csv = summary_data.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name="fire_summary_stats.csv",
+                    mime="text/csv"
+                )
+        
+        with col2:
+            if st.button("🔥 Export Fire Details"):
+                csv = historical_data.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name="historical_fire_data.csv",
+                    mime="text/csv"
+                )
+        
+        with col3:
+            if st.button("📈 Export Analysis Report"):
+                st.success("Analysis report generation feature coming soon!")
+
+def generate_historical_data(start_year, end_year, region, min_size):
+    """Generate synthetic historical fire data"""
+    
+    # Number of fires per year (varies by region)
+    if region == "California":
+        base_fires_per_year = 800
+    elif region in ["Oregon", "Washington"]:
+        base_fires_per_year = 400
+    elif region in ["Montana", "Colorado"]:
+        base_fires_per_year = 300
+    else:
+        base_fires_per_year = 600
+    
+    # Generate data for each year
+    all_data = []
+    
+    for year in range(start_year, end_year + 1):
+        # Vary number of fires by year (climate variations)
+        year_variation = np.random.normal(1.0, 0.2)
+        fires_this_year = int(base_fires_per_year * year_variation)
+        
+        for fire_id in range(fires_this_year):
+            # Generate fire date (biased towards summer months)
+            month_weights = [0.02, 0.02, 0.05, 0.08, 0.12, 0.15, 0.20, 0.18, 0.10, 0.05, 0.02, 0.01]
+            month = np.random.choice(range(1, 13), p=month_weights)
+            day = np.random.randint(1, 29)  # Simplified to avoid month-specific day issues
+            
+            fire_date = datetime(year, month, day)
+            
+            # Generate fire size (log-normal distribution)
+            fire_size = np.random.lognormal(mean=6, sigma=1.5)
+            fire_size = max(fire_size, min_size)  # Apply minimum size filter
+            
+            # Generate other attributes
+            duration = max(1, np.random.gamma(2, 3))  # Fire duration in days
+            
+            # Weather conditions (seasonal patterns)
+            temp = 60 + 20 * np.sin((month - 3) * np.pi / 6) + np.random.normal(0, 5)
+            humidity = 50 - 20 * np.sin((month - 3) * np.pi / 6) + np.random.normal(0, 10)
+            wind_speed = np.random.exponential(10)
+            
+            # Geographic data
+            if region == "All Regions":
+                state = np.random.choice(["CA", "OR", "WA", "MT", "CO", "AZ"], 
+                                       p=[0.3, 0.15, 0.15, 0.15, 0.15, 0.1])
+            else:
+                state_map = {
+                    "California": "CA", "Oregon": "OR", "Washington": "WA",
+                    "Montana": "MT", "Colorado": "CO", "Arizona": "AZ"
+                }
+                state = state_map.get(region, "CA")
+            
+            # Latitude and longitude (rough state boundaries)
+            state_coords = {
+                "CA": (36.0, -119.0), "OR": (43.8, -120.5), "WA": (47.4, -121.5),
+                "MT": (47.0, -110.0), "CO": (39.0, -105.5), "AZ": (33.4, -111.9)
+            }
+            base_lat, base_lon = state_coords[state]
+            latitude = base_lat + np.random.normal(0, 1)
+            longitude = base_lon + np.random.normal(0, 1)
+            
+            # Elevation
+            elevation = np.random.uniform(1000, 8000)
+            
+            all_data.append({
+                'fire_id': f"{year}_{state}_{fire_id:04d}",
+                'year': year,
+                'date': fire_date,
+                'state': state,
+                'latitude': latitude,
+                'longitude': longitude,
+                'acres_burned': fire_size,
+                'duration_days': duration,
+                'temperature': temp,
+                'humidity': max(0, min(100, humidity)),
+                'wind_speed': wind_speed,
+                'elevation': elevation
+            })
+    
+    return pd.DataFrame(all_data)
+
+if __name__ == "__main__":
+    main()
